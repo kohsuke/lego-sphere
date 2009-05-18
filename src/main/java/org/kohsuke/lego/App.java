@@ -21,6 +21,21 @@ public class App {
             this.v = v;
             this.w = w;
         }
+
+        /**
+         * Maps a piece-local (u,v,w) coordinate to the global (x,y,z) coordinate,
+         * given the piece and the quadrant.
+         */
+        public XYZ toXYZ(Piece p) {
+            return p.map(this);
+        }
+
+        /**
+         * Computes the mirror point induced by the given quadrant.
+         */
+        public UVW flip(Quadrant q) {
+            return q.transform(this);
+        }
     }
     private static final class XYZ {
         public final double x,y,z;
@@ -40,6 +55,12 @@ public class App {
          */
         public double r() {
             return sqrt(sq(x)+sq(y)+sq(z));
+        }
+
+        public PhiAndTheta toPhiAndTheta() {
+            double phi   = asin(z/r());
+            double theta = acos(x/sqrt(sq(x)+sq(y)));
+            return new PhiAndTheta(phi,theta);
         }
     }
 
@@ -71,12 +92,17 @@ public class App {
      */
     private static final class PhiAndTheta {
         public final double phi,the;
-        public final Color color;
 
-        private PhiAndTheta(double phi, double the, Color color) {
+        private PhiAndTheta(double phi, double the) {
             this.phi = phi;
             this.the = the;
-            this.color = color;
+        }
+
+        /**
+         * Turn 180 degree along theta.
+         */
+        public PhiAndTheta rotatePi() {
+            return new PhiAndTheta(phi,the+PI);
         }
     }
 
@@ -85,9 +111,21 @@ public class App {
      */
     private static final class Plate {
         public final PhiAndTheta[] corners;
+        public final Color color;
 
-        private Plate(PhiAndTheta[] corners) {
+        private Plate(Color color, PhiAndTheta... corners) {
+            this.color =  color;
             this.corners = corners;
+        }
+
+        /**
+         * Creates a plate that's turned 180 degree along theta
+         */
+        public Plate rotatePi() {
+            PhiAndTheta[] x = new PhiAndTheta[4];
+            for (int i=0; i<4; i++)
+                x[i] = corners[i].rotatePi();
+            return new Plate(color,x);
         }
     }
 
@@ -107,23 +145,43 @@ public class App {
     /**
      * 3 different pieces. The other 3 are the point reflection.
      */
-    private static Piece[] PIECES = new Piece[] {
-        new Piece(Color.RED) {
+    private static Piece[] PIECES = buildPieces();
+
+    private static Piece[] buildPieces() {
+        // 3 primary pieces
+        Piece p1 = new Piece(Color.RED) {
             XYZ map(UVW p) {
-                return new XYZ(p.w,-p.u,p.v);
+                return new XYZ(p.w, -p.u, p.v);
             }
-        },
-        new Piece(Color.CYAN) {
+        };
+        Piece p2 = new Piece(Color.CYAN) {
             XYZ map(UVW p) {
-                return new XYZ(-p.u,p.v,p.w);
+                return new XYZ(-p.u, p.v, p.w);
             }
-        },
-        new Piece(Color.MAGENTA) {
+        };
+        Piece p3 = new Piece(Color.MAGENTA) {
             XYZ map(UVW p) {
-                return new XYZ(p.v,p.w,-p.u);
+                return new XYZ(p.v, p.w, -p.u);
+            }
+        };
+
+        // the other 3 are point reflection
+        class MirrorPiece extends Piece {
+            final Piece base;
+
+            MirrorPiece(Piece base) {
+                super(base.color);
+                this.base = base;
+            }
+
+            XYZ map(UVW p) {
+                return base.map(p).toPointReflection();
             }
         }
-    };
+
+
+        return new Piece[] {p1,p2,p3,new MirrorPiece(p1),new MirrorPiece(p2),new MirrorPiece(p3)};
+    }
 
     /**
      * Represents 6 pieces that consistute the entire sphere.
@@ -187,7 +245,7 @@ public class App {
             out.println("-----------------");
         }
 
-        List<PhiAndTheta> projections = new ArrayList<PhiAndTheta>();
+        List<Plate> projections = new ArrayList<Plate>();
 
         {// now let's compute the projection
             for (int v=0; v <my; v++) {
@@ -197,32 +255,29 @@ public class App {
                     for (int i=0; i<mz; i++)
                         if(points[c(u,v,i,l)])
                             w++;
+                    if(w==0)    continue;   // there's no plate here
 
-                    if(w==0)    continue;
+                    for (Quadrant q : QUADRANTS) {// the same plate is copied to all 4 quadrants
+                        for (Piece piece : PIECES) {// for all 6 pieces
+                            // center of plate
+                            final UVW p = new UVW(u+0.5, v+0.5, w*0.4+(l/2)+0.6).flip(q);
+                            // corners of the plate
+                            UVW[] corners = new UVW[4];
+                            for (int j=0; j<4; j++)
+                                corners[j] = new UVW(u+(j/2),v+((j==0||j==3)?0:1),p.w).flip(q);
 
-                    // center of this plate
-                    final UVW p = new UVW(u+dx, v+dy, w*0.4+(l/2)+dz);
+                            XYZ xyz = p.toXYZ(piece);
+                            if(xyz.y<0)
+                                continue; // this and adding 2 points to projection cancel out each other
 
-                    for (Quadrant q : QUADRANTS) {
-//                        Piece piece = PIECES[1];
-//                        int i=1;
-//                        {{
-                        for (Piece piece : PIECES) {
-                            for(int i=0; i<2; i++) {
-                                XYZ xyz = piece.map(q.transform(p));
-                                if(i==1)
-                                    xyz = xyz.toPointReflection();
+                            Plate plate = new Plate(piece.color,
+                                    corners[0].toXYZ(piece).toPhiAndTheta(),
+                                    corners[1].toXYZ(piece).toPhiAndTheta(),
+                                    corners[2].toXYZ(piece).toPhiAndTheta(),
+                                    corners[3].toXYZ(piece).toPhiAndTheta());
 
-                                if(xyz.y<0)
-                                    continue; // this and adding 2 points to projection cancel out each other
-
-                                // convert (x,y,z) to longitude and latitude
-                                double phi   = asin(xyz.z/xyz.r());
-                                double theta = acos(xyz.x/sqrt(sq(xyz.x)+sq(xyz.y)));
-
-                                projections.add(new PhiAndTheta(phi,theta, piece.color));
-                                projections.add(new PhiAndTheta(phi,theta+PI, piece.color));
-                            }
+                            projections.add(plate);
+                            projections.add(plate.rotatePi());
                         }
                     }
                 }
@@ -238,20 +293,27 @@ public class App {
 
             BufferedImage img = new BufferedImage(2048,1502,BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = img.createGraphics();
-            for (PhiAndTheta p : projections) {
-                int x = (int)(img.getWidth()*p.the/(2*PI));
-                int y = (int)(img.getHeight()*(millerProjection(p.phi)+yrange)/(2*yrange));
-
-                x=mod(x,img.getWidth());
-                //y=mod(y,img.getHeight());
-
+            for (Plate plate : projections) {
+                // map 4 corners to screen x,y
+                Point[] cp = new Point[4];
+                for (int i = 0; i < cp.length; i++) {
+                    PhiAndTheta p = plate.corners[i];
+                    int x = (int)(img.getWidth()*p.the/(2*PI));
+//                    x=mod(x,img.getWidth());
+                    int y = (int)(img.getHeight()*(millerProjection(p.phi)+yrange)/(2*yrange));
+                    cp[i] = new Point(x,y);
+                }
 
                 g.setStroke(new BasicStroke(1));
-                g.setColor(p.color);
-                g.drawArc(x,y,10,10,0,360);
+                g.setColor(plate.color);
+                for (int i = 0; i < cp.length; i++) {
+                    Point s = cp[i];
+                    Point e = cp[(i+1)%4];
+                    g.drawLine(s.x,s.y,e.x,e.y);
+                }
             }
 
-            ImageIO.write(img,"PNG",new File("picture.png")); 
+            ImageIO.write(img,"PNG",new File("picture2.png")); 
         }
     }
 
