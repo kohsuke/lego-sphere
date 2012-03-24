@@ -10,6 +10,7 @@ import static java.lang.Math.sin;
 import static java.lang.Math.cos;
 import static java.lang.System.out;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class App {
@@ -34,7 +35,8 @@ public class App {
      * (U,V,W) is a coordinate local to a piece. Origin is depicted in "x" above.
      * studs would be facing upward, and so is the W-axis.
      *
-     * The bottom of this piece is a flat surface (which faces the inner cube.) W=0 is on this surface.
+     * W=0 is at the center of earth.
+     * The bottom of this piece is a flat surface (which faces the inner cube.) That surface is W=l/2
      */
     private static final class UVW {
         public final double u,v,w;
@@ -109,12 +111,11 @@ public class App {
     /**
      * Represents 4 quadrants.
      */
-    private static Quadrant[] QUADRANTS = new Quadrant[] {
+    private static List<Quadrant> QUADRANTS = Arrays.asList(
             new Quadrant( 1, 1),
             new Quadrant( 1,-1),
             new Quadrant(-1, 1),
-            new Quadrant(-1,-1)
-    };
+            new Quadrant(-1,-1));
 
     /**
      * Polar coordinate. Longitude (theta) and latitude (phi)
@@ -138,23 +139,32 @@ public class App {
     /**
      * A plate represented as a square whose four corners are in (theta,phi)
      */
-    private static final class Plate {
+    private static final class Surface {
         public final PhiAndTheta[] corners;
         public final Color color;
 
-        private Plate(Color color, PhiAndTheta... corners) {
+        private Surface(Color color, PhiAndTheta... corners) {
             this.color =  color;
             this.corners = corners;
+        }
+
+        private Surface(Piece piece, UVW c1, UVW c2, UVW c3, UVW c4) {
+            this.color =  piece.color;
+            this.corners = new PhiAndTheta[4];
+            corners[0] = c1.toXYZ(piece).toPhiAndTheta();
+            corners[1] = c2.toXYZ(piece).toPhiAndTheta();
+            corners[2] = c3.toXYZ(piece).toPhiAndTheta();
+            corners[3] = c4.toXYZ(piece).toPhiAndTheta();
         }
 
         /**
          * Creates a plate that's turned 180 degree along theta
          */
-        public Plate rotatePi() {
+        public Surface rotatePi() {
             PhiAndTheta[] x = new PhiAndTheta[4];
             for (int i=0; i<4; i++)
                 x[i] = corners[i].rotatePi();
-            return new Plate(color,x);
+            return new Surface(color,x);
         }
     }
 
@@ -175,11 +185,13 @@ public class App {
     }
 
     /**
-     * 3 different pieces. The other 3 are the point reflection.
+     * 6 pieces that form the entire Earth.
+     *
+     * 3 are different, and the other 3 are the point reflections.
      */
-    private static Piece[] PIECES = buildPieces();
+    private static List<Piece> PIECES = buildPieces();
 
-    private static Piece[] buildPieces() {
+    private static List<Piece> buildPieces() {
         // 3 primary pieces
         Piece p1 = new Piece(Color.RED) {
             XYZ map(UVW p) {
@@ -212,7 +224,14 @@ public class App {
         }
 
 
-        return new Piece[] {p1,p2,p3,new MirrorPiece(p1),new MirrorPiece(p2),new MirrorPiece(p3)};
+        return Arrays.asList(p1,p2,p3,new MirrorPiece(p1),new MirrorPiece(p2),new MirrorPiece(p3));
+    }
+    
+    private static class SurfaceList extends ArrayList<Surface> {
+        public void put(Surface s) {
+            add(s);
+            add(s.rotatePi());
+        }
     }
 
     /**
@@ -239,7 +258,7 @@ public class App {
         final double r2 = sq(l/2)*3;
 
         // to decide in/out in the center of the plate
-        final double d=0.5;
+        final double d=0.8;
         // float double d=1;  // to decide in/out at the far corner
         // final double d = 0.8;
 
@@ -292,7 +311,7 @@ public class App {
             out.println("-----------------");
         }
 
-        List<Plate> projections = new ArrayList<Plate>();
+        SurfaceList projections = new SurfaceList();
 
         {
             // now let's compute the projection
@@ -307,27 +326,38 @@ public class App {
                             w++;
                     if(w==0)    continue;   // there's no plate here
 
+                    w--;    // we want w to be at the bottom of the plate, so that (u,v,w) points to the inner most point of the 1x1x1 plate
+
                     for (Quadrant q : QUADRANTS) {// the same plate is copied to all 4 quadrants
                         for (Piece piece : PIECES) {// for all 6 pieces
-                            // center of plate
-                            final UVW p = new UVW(u+BW/2, v+BW/2, w*BH+(l/2)+BH/2).flip(q);
-                            // corners of the plate
-                            UVW[] corners = new UVW[4];
-                            for (int j=0; j<4; j++)
-                                corners[j] = new UVW(u+(j/2),v+((j==0||j==3)?0:1),p.w).flip(q);
+                            // 8 corners of the 1x1x1 plate at this position
+                            UVW[][][] eight = eightCorners();
+                            for (int _u=0; _u<2; _u++) {
+                                for (int _v=0; _v<2; _v++) {
+                                    for (int _w=0; _w<2; _w++) {
+                                        eight[_u][_v][_w] = new UVW(u+_u,v+_v,(l/2)+(w+_w)*BH).flip(q);
+                                    }
+                                }                                
+                            }
 
-                            XYZ xyz = p.toXYZ(piece);
-                            if(xyz.y<0)
-                                continue; // this and adding 2 points to projection cancel out each other
+                            // 3 outer surfaces
+                            projections.put(new Surface(piece,
+                                    eight[0][0][1],
+                                    eight[0][1][1],
+                                    eight[1][1][1],
+                                    eight[1][0][1]));
 
-                            Plate plate = new Plate(piece.color,
-                                    corners[0].toXYZ(piece).toPhiAndTheta(),
-                                    corners[1].toXYZ(piece).toPhiAndTheta(),
-                                    corners[2].toXYZ(piece).toPhiAndTheta(),
-                                    corners[3].toXYZ(piece).toPhiAndTheta());
+                            projections.put(new Surface(piece,
+                                    eight[1][0][0],
+                                    eight[1][0][1],
+                                    eight[1][1][1],
+                                    eight[1][1][0]));
 
-                            projections.add(plate);
-                            projections.add(plate.rotatePi());
+                            projections.put(new Surface(piece,
+                                    eight[0][1][0],
+                                    eight[0][1][1],
+                                    eight[1][1][1],
+                                    eight[1][1][0]));
                         }
                     }
                 }
@@ -343,7 +373,7 @@ public class App {
 
             BufferedImage img = new BufferedImage(2048,1502,BufferedImage.TYPE_INT_ARGB);
             Graphics2D g = img.createGraphics();
-            for (Plate plate : projections) {
+            for (Surface plate : projections) {
                 // map 4 corners to screen x,y
                 Point[] cp = new Point[4];
                 for (int i = 0; i < cp.length; i++) {
@@ -381,6 +411,21 @@ public class App {
     private static int c(int ix, int iy, int iz) {
         int il = (int)l;
         return (iz*il+iy)*il+ix;
+    }
+
+    /**
+     * Allocates 2x2x2 array for holding 8 corners of 1x1x1 plate
+     */
+    private static UVW[][][] eightCorners() {
+        UVW[][][] corners = new UVW[2][][];
+        for (int i=0; i<2; i++) {
+            corners[i] = new UVW[2][];
+            for (int j=0; j<2; j++) {
+                corners[i][j] = new UVW[2];
+            }
+        }
+
+        return corners;
     }
 
     /**
