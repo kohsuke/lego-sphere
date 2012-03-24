@@ -13,6 +13,29 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class App {
+    /**
+     * Earth is divided into 6 equal-size pieces like how valleyball is put together.
+     * Looking from Sun to Earth, each piece would look something like:
+     *
+     * ^ V
+     * |
+     * |
+     *
+     *       -----------
+     *      /           \
+     *     /             \
+     *     |      x      |
+     *     \             /
+     *      \           /
+     *       -----------
+     *                              ---> U
+     *
+     *
+     * (U,V,W) is a coordinate local to a piece. Origin is depicted in "x" above.
+     * studs would be facing upward, and so is the W-axis.
+     *
+     * The bottom of this piece is a flat surface (which faces the inner cube.) W=0 is on this surface.
+     */
     private static final class UVW {
         public final double u,v,w;
 
@@ -37,6 +60,12 @@ public class App {
             return q.transform(this);
         }
     }
+
+    /**
+     * (X,Y,Z) is a coordinate global to Earth. Its origin is the center of earth.
+     *
+     * Looking from Sun to Earth, Z axis is the depth, X increases to the right, Y increases to the north pole.
+     */
     private static final class XYZ {
         public final double x,y,z;
 
@@ -83,12 +112,12 @@ public class App {
     private static Quadrant[] QUADRANTS = new Quadrant[] {
             new Quadrant( 1, 1),
             new Quadrant( 1,-1),
-            new Quadrant(-1,1),
+            new Quadrant(-1, 1),
             new Quadrant(-1,-1)
     };
 
     /**
-     * Longitude (theta) and latitude (phi)
+     * Polar coordinate. Longitude (theta) and latitude (phi)
      */
     private static final class PhiAndTheta {
         public final double phi,the;
@@ -133,6 +162,9 @@ public class App {
      * Maps the piece-local (u,v,w) coordinate to the global (x,y,z) coordinate.
      */
     private abstract static class Piece {
+        /**
+         * Used to render the piece
+         */
         public final Color color;
 
         protected Piece(Color color) {
@@ -184,40 +216,54 @@ public class App {
     }
 
     /**
-     * Represents 6 pieces that consistute the entire sphere.
+     * Width of 1x1x1 brick
+     */
+    private static final double BW = 1;
+
+    /**
+     * Height of 1x1x1 plate
+     */
+    private static final double BH = 0.4;
+
+    // sphere contains a cube inside. This is the length of the cube edge
+    private static final double l = 12;
+
+    /**
+     * Represents 6 pieces that constitute the entire sphere.
      */
 
     public static void main(String[] args) throws IOException {
-        final double l = 12;
 
-        // square of the sphere radius
+        // from there, compute the sphere radius and its square
+        final double r  = l/2*sqrt(3);
         final double r2 = sq(l/2)*3;
 
         // to decide in/out in the center of the plate
-        // float d=0.5f;
+        final double d=0.5;
+        // float double d=1;  // to decide in/out at the far corner
+        // final double d = 0.8;
 
-        // to decide in/out at the far corner
-        // float d=1f;
-
-        final double d = 0.8;
-
-        final double dx=1*d,dy=1*d,dz=0.4*d;
+        final double dx=BW*d,dy=BW*d,dz=BH*d;
 
         // which voxels are occupied?
         boolean[] points = new boolean[(int)(l*l*l*3)];
 
-        int mx=0,my=0,mz; // integer bound of regision
+        int mx=0,my=0,mz; // integer bound of region
 
+        // looking from Sun into the center of earth (thus studs facing your way)
+        // Z-axis is depth, X-axis is width, and Y-axis is height
+        //
+        // imagine the grid space of 1x1x1 plates. We scan them and decide which plate should be filled and which shouldn't
         int iz=0;
-        for (double z=l/2; z<l*sqrt(3)/2; z+=0.4,iz++) {
+        for (double z=l/2; z<r; z+=BH,iz++) {
             int iy=0;
-            for (double y=0; y<l/2; y++,iy++) {
+            for (double y=0; y<l/2; y+=BW,iy++) {
                 int ix=0;
-                for (double x=0; x<l*sqrt(2)/2; x++,ix++) {
+                for (double x=0; x<l*sqrt(2)/2; x+=BW,ix++) {
                     boolean plate = sq(x+dx)+sq(y+dy)+sq(z+dz) < r2;
                     if(plate)   out.print('#');
                     else        out.print(' ');
-                    points[c(ix,iy,iz,l)] = plate;
+                    points[c(ix,iy,iz)] = plate;
                 }
                 out.println();
                 mx=ix;
@@ -231,9 +277,10 @@ public class App {
         for (int z=0; z<mz; z++) {
             for (int y=0; y<my; y++) {
                 for (int x=0; x<mx; x++) {
+                    // compute the number of 1x1x1 plate above z
                     int h=0;
                     for (int i=z; i<mz; i++)
-                        if(points[c(x,y,i,l)])
+                        if(points[c(x,y,i)])
                             h++;
                     if(h==0)    out.print(' ');
                     else
@@ -247,20 +294,23 @@ public class App {
 
         List<Plate> projections = new ArrayList<Plate>();
 
-        {// now let's compute the projection
+        {
+            // now let's compute the projection
+            // we scan a 4th of a piece, then flip them over to fill the entire piece, then copy them 6 times
+            // to fully fill the entire earth.
             for (int v=0; v <my; v++) {
                 for (int u=0; u<mx; u++) {
                     // compute the height at this (x,y)
                     int w=0;
                     for (int i=0; i<mz; i++)
-                        if(points[c(u,v,i,l)])
+                        if(points[c(u,v,i)])
                             w++;
                     if(w==0)    continue;   // there's no plate here
 
                     for (Quadrant q : QUADRANTS) {// the same plate is copied to all 4 quadrants
                         for (Piece piece : PIECES) {// for all 6 pieces
                             // center of plate
-                            final UVW p = new UVW(u+0.5, v+0.5, w*0.4+(l/2)+0.6).flip(q);
+                            final UVW p = new UVW(u+BW/2, v+BW/2, w*BH+(l/2)+BH/2).flip(q);
                             // corners of the plate
                             UVW[] corners = new UVW[4];
                             for (int j=0; j<4; j++)
@@ -286,7 +336,7 @@ public class App {
 
         System.out.println("projections="+projections.size());
 
-        {// plot the computed projectoins on the miller projection map
+        {// plot the computed projections on the miller projection map
 
             // dynamic range of y is (-yrange,yrange)
             double yrange = millerProjection(0.5*PI);
@@ -325,9 +375,12 @@ public class App {
         return (x+mod)%mod;
     }
 
-    private static int c(int x, int y, int z, double l) {
+    /**
+     * Takes discrete integer (ix,iy,iz) position of a 1x1x1 plate cube, and converts that to the index in the array.
+     */
+    private static int c(int ix, int iy, int iz) {
         int il = (int)l;
-        return (z*il+y)*il+x;
+        return (iz*il+iy)*il+ix;
     }
 
     /**
